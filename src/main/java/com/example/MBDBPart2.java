@@ -29,7 +29,7 @@ public class MBDBPart2 {
             }
             
             Scanner scanner = new Scanner(System.in);
-            String baseQuery = "SELECT * FROM preliminary WHERE action_taken_name = 'Loan originated' AND (";
+            String baseQuery = "SELECT * FROM preliminary2 WHERE action_taken_name = 'Loan originated' AND (";
             List<String> filters = new ArrayList<>();
             Map<String, String> activeFilters = new LinkedHashMap<>();
             while (true) {
@@ -201,7 +201,7 @@ public class MBDBPart2 {
     }
     
     private static void calculateAndOfferRate(Connection conn, Map<String, String> activeFilters) {
-        String baseQuery = "SELECT loan_amount_000s, rate_spread, lien_status, purchaser_type FROM preliminary WHERE action_taken_name = 'Loan originated' AND purchaser_type IN (0, 1, 2, 3, 4, 8)";
+        String baseQuery = "SELECT loan_amount_000s, rate_spread, lien_status, purchaser_type FROM preliminary2 WHERE action_taken_name = 'Loan originated' AND purchaser_type IN (0, 1, 2, 3, 4, 8)";
         
         if (!activeFilters.isEmpty()) {
             baseQuery += " AND " + activeFilters.entrySet().stream()
@@ -266,7 +266,7 @@ public class MBDBPart2 {
     }
     
     private static void updatePurchaserType(Connection conn, Map<String, String> activeFilters) {
-        String updateQuery = "UPDATE preliminary SET purchaser_type = 9, purchaser_type_name = 'Private Securitization' " +
+        String updateQuery = "UPDATE preliminary2 SET purchaser_type = 9, purchaser_type_name = 'Private Securitization' " +
                              "WHERE action_taken_name = 'Loan originated' AND purchaser_type IN (0, 1, 2, 3, 4, 8)";
         
         if (!activeFilters.isEmpty()) {
