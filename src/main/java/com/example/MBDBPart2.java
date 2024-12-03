@@ -105,7 +105,7 @@ public class MBDBPart2 {
                 System.out.println("Enter counties (comma-separated):");
                 String counties = scanner.nextLine();
                 filters.add("county_name IN (" + formatList(counties.split(",")) + ")");
-                activeFilters.put("County", counties);
+                activeFilters.put("county_name", counties);
             }
             case 2 -> {
                 System.out.println("Enter loan types (comma-separated):");
@@ -266,7 +266,8 @@ public class MBDBPart2 {
     }
     
     private static void updatePurchaserType(Connection conn, Map<String, String> activeFilters) {
-        String updateQuery = "UPDATE preliminary SET purchaser_type = 'Private Securitization' WHERE action_taken_name = 'Loan originated' AND purchaser_type IN (0, 1, 2, 3, 4, 8)";
+        String updateQuery = "UPDATE preliminary SET purchaser_type = 9, purchaser_type_name = 'Private Securitization' " +
+                             "WHERE action_taken_name = 'Loan originated' AND purchaser_type IN (0, 1, 2, 3, 4, 8)";
         
         if (!activeFilters.isEmpty()) {
             updateQuery += " AND " + activeFilters.entrySet().stream()
@@ -277,10 +278,11 @@ public class MBDBPart2 {
         try (Statement stmt = conn.createStatement()) {
             int rowsUpdated = stmt.executeUpdate(updateQuery);
             System.out.println(rowsUpdated + " mortgages updated to 'Private Securitization'.");
-            System.exit(0); // Exit the program after successful update
+            System.exit(0); // Exit the program after a successful update
         } catch (SQLException e) {
             System.out.println("Error updating purchaser types. Returning to the main menu.");
             e.printStackTrace();
         }
     }
+    
 }
