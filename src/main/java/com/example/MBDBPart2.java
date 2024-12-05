@@ -64,6 +64,9 @@ public class MBDBPart2 {
                         continue;
                     case 5:
                      String finalQuery = baseQuery + String.join(" AND ", filters) + ");";
+                     if(finalQuery.equals("SELECT * FROM preliminary2 WHERE action_taken_name = 'Loan originated' AND ();")){
+                        finalQuery = "SELECT * FROM preliminary2 WHERE action_taken_name = 'Loan originated'";
+                     }
                      System.out.println("Executing Query: " + finalQuery);
                      executeQuery(conn, finalQuery);
                      continue;
@@ -115,7 +118,7 @@ public class MBDBPart2 {
             }
             case 3 -> {
                 System.out.println("Enter minimum tract_to_msamd_income:");
-                int min = scanner.nextInt();
+                double min = scanner.nextDouble();
                 System.out.println("Enter maximum tract_to_msamd_income:");
                 int max = scanner.nextInt();
                 scanner.nextLine(); // Consume newline
@@ -149,7 +152,7 @@ public class MBDBPart2 {
             System.out.println("No filters to delete.");
             return;
         }
-
+    
         System.out.println("Current Filters:");
         int index = 1;
         Map<Integer, String> filterKeys = new HashMap<>();
@@ -158,25 +161,61 @@ public class MBDBPart2 {
             filterKeys.put(index, key);
             index++;
         }
-
+    
         System.out.print("Enter filter number to delete (or 0 to cancel): ");
         int filterChoice = scanner.nextInt();
         scanner.nextLine(); // Consume newline
-
+    
         if (filterChoice == 0) {
             System.out.println("Deletion cancelled.");
             return;
         }
-
+    
         String keyToRemove = filterKeys.get(filterChoice);
         if (keyToRemove != null) {
-            filters.removeIf(filter -> filter.contains(keyToRemove));
-            activeFilters.remove(keyToRemove);
-            System.out.println("Filter '" + keyToRemove + "' removed.");
+            // Remove from activeFilters
+            String valueToRemove = activeFilters.remove(keyToRemove);
+    
+            // Build the SQL-like filter string to remove from `filters`
+            String filterStringToRemove = buildFilterString(keyToRemove, valueToRemove);
+            if (filterStringToRemove != null) {
+                filters.remove(filterStringToRemove);
+                System.out.println("Filter '" + keyToRemove + "' removed.");
+            } else {
+                System.out.println("Error: Could not build filter string to remove.");
+            }
         } else {
             System.out.println("Invalid choice.");
         }
+        
+        // Debugging: Print the current filters list
+        System.out.println("Filters list after deletion: " + filters);
     }
+    
+    // Helper method to build the filter string based on key and value
+    private static String buildFilterString(String key, String value) {
+        switch (key) {
+            case "county_name":
+                return "county_name IN (" + value.replace(", ", "','") + ")";
+            case "Loan Type":
+                return "loan_type_name IN ('" + value + "')";
+            case "Tract to MSAMD Income":
+                String[] bounds = value.split(" - ");
+                return "tract_to_msamd_income BETWEEN " + bounds[0] + " AND " + bounds[1];
+            case "Loan Purpose":
+                return "loan_purpose_name IN ('" + value + "')";
+            case "Property Type":
+                return "property_type_name IN ('" + value + "')";
+            case "Owner Occupied":
+                return "owner_occupancy_name = '" + value + "'";
+            default:
+                System.out.println("Unknown filter key: " + key);
+                return null;
+        }
+    }
+    
+    
+    
     
     private static String formatList(String[] items) {
         return String.join(",", Arrays.stream(items).map(item -> "'" + item.trim() + "'").toArray(String[]::new));
