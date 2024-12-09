@@ -98,6 +98,8 @@ public class MBDBPart2 {
             4. Loan Purpose
             5. Property Type
             6. Owner Occupied
+            7. MSAMD
+            8. Income to Debt Ratio
             """);
         System.out.print("Enter filter type: ");
         int filterType = scanner.nextInt();
@@ -138,10 +140,44 @@ public class MBDBPart2 {
                 activeFilters.put("Property Type", propertyTypes);
             }
             case 6 -> {
-                System.out.println("Enter owner occupancy (Yes/No):");
+                System.out.println("Enter owner occupancy (options: Not owner-occupied as a principal dwelling, Owner-occupied as a principal dwelling):");
                 String ownerOccupied = scanner.nextLine();
                 filters.add("owner_occupancy_name = '" + ownerOccupied + "'");
                 activeFilters.put("Owner Occupied", ownerOccupied);
+            }
+            case 7 -> {
+                System.out.println("Enter valid MSAMD:");
+                String msamd = scanner.nextLine();
+                filters.add("msamd_name = '" + msamd + "'");
+                activeFilters.put("MSAMD", msamd);
+            }
+            case 8 -> {
+                System.out.println("Enter minimum applicant income to loan amount ratio (or press Enter to skip):");
+                String minRatioInput = scanner.nextLine();
+                System.out.println("Enter maximum applicant income to loan amount ratio (or press Enter to skip):");
+                String maxRatioInput = scanner.nextLine();
+
+                if (!minRatioInput.isEmpty() || !maxRatioInput.isEmpty()) {
+                    List<String> conditions = new ArrayList<>();
+                    if (!minRatioInput.isEmpty()) {
+                        double minRatio = Double.parseDouble(minRatioInput);
+                        conditions.add("(applicant_income_000s / loan_amount_000s) >= " + minRatio);
+                    }
+                    if (!maxRatioInput.isEmpty()) {
+                        double maxRatio = Double.parseDouble(maxRatioInput);
+                        conditions.add("(applicant_income_000s / loan_amount_000s) <= " + maxRatio);
+                    }
+                    // Join the conditions with "AND" if both min and max are provided
+                    String condition = String.join(" AND ", conditions);
+                    filters.add(condition);
+                    activeFilters.put("Applicant Income to Loan Ratio", 
+                        (!minRatioInput.isEmpty() ? "Min: " + minRatioInput : "") +
+                        (!minRatioInput.isEmpty() && !maxRatioInput.isEmpty() ? ", " : "") +
+                        (!maxRatioInput.isEmpty() ? "Max: " + maxRatioInput : "")
+                    );
+                } else {
+                    System.out.println("No ratio filter applied.");
+                }
             }
             default -> System.out.println("Invalid filter type.");
         }
