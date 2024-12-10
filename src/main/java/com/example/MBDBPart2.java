@@ -2,6 +2,7 @@ package com.example;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.SQLException;
@@ -116,40 +117,42 @@ public class MBDBPart2 {
                 System.out.println("Enter loan types (comma-separated):");
                 String loanTypes = scanner.nextLine();
                 filters.add("loan_type_name IN (" + formatList(loanTypes.split(",")) + ")");
-                activeFilters.put("Loan Type", loanTypes);
+                activeFilters.put("loan_type_name", loanTypes);
             }
             case 3 -> {
                 System.out.println("Enter minimum tract_to_msamd_income:");
                 double min = scanner.nextDouble();
                 System.out.println("Enter maximum tract_to_msamd_income:");
-                int max = scanner.nextInt();
+                double max = scanner.nextDouble();
                 scanner.nextLine(); // Consume newline
-                filters.add("tract_to_msamd_income BETWEEN " + min + " AND " + max);
-                activeFilters.put("Tract to MSAMD Income", min + " - " + max);
+                // Fix the invalid syntax issue by formatting the filter properly.
+                filters.add("tract_to_msamd_income >= " + min + " AND tract_to_msamd_income <= " + max);
+                activeFilters.put("tract_to_msamd_income", min + "," + max); // Store for later query use
             }
+            
             case 4 -> {
                 System.out.println("Enter loan purposes (comma-separated):");
                 String loanPurposes = scanner.nextLine();
                 filters.add("loan_purpose_name IN (" + formatList(loanPurposes.split(",")) + ")");
-                activeFilters.put("Loan Purpose", loanPurposes);
+                activeFilters.put("loan_purpose_name", loanPurposes);
             }
             case 5 -> {
                 System.out.println("Enter property types (comma-separated):");
                 String propertyTypes = scanner.nextLine();
                 filters.add("property_type_name IN (" + formatList(propertyTypes.split(",")) + ")");
-                activeFilters.put("Property Type", propertyTypes);
+                activeFilters.put("property_type_name", propertyTypes);
             }
             case 6 -> {
                 System.out.println("Enter owner occupancy (options: Not owner-occupied as a principal dwelling, Owner-occupied as a principal dwelling):");
                 String ownerOccupied = scanner.nextLine();
                 filters.add("owner_occupancy_name = '" + ownerOccupied + "'");
-                activeFilters.put("Owner Occupied", ownerOccupied);
+                activeFilters.put("owner_occupancy_name", ownerOccupied);
             }
             case 7 -> {
                 System.out.println("Enter valid MSAMD:");
                 String msamd = scanner.nextLine();
                 filters.add("msamd_name = '" + msamd + "'");
-                activeFilters.put("MSAMD", msamd);
+                activeFilters.put("msamd_name", msamd);
             }
             case 8 -> {
                 System.out.println("Enter minimum applicant income to loan amount ratio (or press Enter to skip):");
@@ -170,7 +173,7 @@ public class MBDBPart2 {
                     // Join the conditions with "AND" if both min and max are provided
                     String condition = String.join(" AND ", conditions);
                     filters.add(condition);
-                    activeFilters.put("Applicant Income to Loan Ratio", 
+                    activeFilters.put("income_to_loan_ratio", 
                         (!minRatioInput.isEmpty() ? "Min: " + minRatioInput : "") +
                         (!minRatioInput.isEmpty() && !maxRatioInput.isEmpty() ? ", " : "") +
                         (!maxRatioInput.isEmpty() ? "Max: " + maxRatioInput : "")
@@ -232,23 +235,41 @@ public class MBDBPart2 {
     private static String buildFilterString(String key, String value) {
         switch (key) {
             case "county_name":
-                return "county_name IN (" + value.replace(", ", "','") + ")";
-            case "Loan Type":
-                return "loan_type_name IN ('" + value + "')";
-            case "Tract to MSAMD Income":
-                String[] bounds = value.split(" - ");
-                return "tract_to_msamd_income BETWEEN " + bounds[0] + " AND " + bounds[1];
-            case "Loan Purpose":
-                return "loan_purpose_name IN ('" + value + "')";
-            case "Property Type":
-                return "property_type_name IN ('" + value + "')";
-            case "Owner Occupied":
+                return "county_name IN (" + formatList(value.split(",")) + ")";
+            case "loan_type_name":
+                return "loan_type_name IN (" + formatList(value.split(",")) + ")";
+            case "tract_to_msamd_income": {
+                String[] incomeRange = value.split(",");
+                if (incomeRange.length == 2) {
+                    return "tract_to_msamd_income BETWEEN " + incomeRange[0].trim() + " AND " + incomeRange[1].trim();
+                } else {
+                    throw new IllegalArgumentException("Invalid range for tract_to_msamd_income: " + value);
+                }
+            }  
+            case "loan_purpose_name":
+                return "loan_purpose_name IN (" + formatList(value.split(",")) + ")";
+            case "property_type_name":
+                return "property_type_name IN (" + formatList(value.split(",")) + ")";
+            case "owner_occupancy_name":
                 return "owner_occupancy_name = '" + value + "'";
+            case "msamd_name":
+                return "msamd_name = '" + value + "'";
+            case "income_to_loan_ratio":
+                String[] parts = value.split(", ");
+                List<String> conditions = new ArrayList<>();
+                for (String part : parts) {
+                    if (part.startsWith("Min:")) {
+                        conditions.add("(applicant_income_000s / loan_amount_000s) >= " + part.substring(5));
+                    } else if (part.startsWith("Max:")) {
+                        conditions.add("(applicant_income_000s / loan_amount_000s) <= " + part.substring(5));
+                    }
+                }
+                return String.join(" AND ", conditions);
             default:
-                System.out.println("Unknown filter key: " + key);
                 return null;
         }
     }
+    
     
     
     
@@ -276,88 +297,140 @@ public class MBDBPart2 {
     }
     
     private static void calculateAndOfferRate(Connection conn, Map<String, String> activeFilters) {
-        String baseQuery = "SELECT loan_amount_000s, rate_spread, lien_status, purchaser_type FROM preliminary2 WHERE action_taken_name = 'Loan originated' AND purchaser_type IN (0, 1, 2, 3, 4, 8)";
-        
+        StringBuilder baseQuery = new StringBuilder(
+                "SELECT loan_amount_000s, rate_spread, lien_status, purchaser_type FROM preliminary2 WHERE action_taken_name = 'Loan originated' AND purchaser_type IN (0, 1, 2, 3, 4, 8)");
+    
+        List<Object> parameters = new ArrayList<>();
+    
         if (!activeFilters.isEmpty()) {
-            baseQuery += " AND " + activeFilters.entrySet().stream()
-                    .map(entry -> entry.getKey() + " = '" + entry.getValue() + "'")
-                    .collect(Collectors.joining(" AND "));
-        }
-
-        try (Statement stmt = conn.createStatement();
-            ResultSet rs = stmt.executeQuery(baseQuery)) {
-
-            double baseRate = 2.33;
-            double totalWeightedRate = 0.0;
-            double totalLoanAmount = 0.0;
-
-            while (rs.next()) {
-                double loanAmount = rs.getDouble("loan_amount_000s");
-                double rateSpread = rs.getDouble("rate_spread");
-                int lienStatus = rs.getInt("lien_status");
-
-                if (rs.wasNull()) { // Missing rate spread
-                    if (lienStatus == 1) {
-                        rateSpread = 1.5;
-                    } else if (lienStatus == 2) {
-                        rateSpread = 3.5;
+            baseQuery.append(" AND ");
+            for (Map.Entry<String, String> entry : activeFilters.entrySet()) {
+                String key = entry.getKey();
+                String value = entry.getValue();
+    
+                if (value.contains(",")) {
+                    String[] range = value.split(",");
+                    if (isNumeric(range[0]) && isNumeric(range[1])) {
+                        baseQuery.append(key).append(" BETWEEN ? AND ? AND ");
+                        parameters.add(Double.parseDouble(range[0]));
+                        parameters.add(Double.parseDouble(range[1]));
+                    }
+                } else {
+                    if (isNumeric(value)) {
+                        baseQuery.append(key).append(" = ? AND ");
+                        parameters.add(Double.parseDouble(value));
+                    } else {
+                        baseQuery.append(key).append(" = ? AND ");
+                        parameters.add(value);
                     }
                 }
-
-                double effectiveRate;
-                if ((lienStatus == 1 && rateSpread < 1.5) || (lienStatus == 2 && rateSpread < 3.5)) {
-                    effectiveRate = Double.NaN; // NA
+            }
+            baseQuery.setLength(baseQuery.length() - 5);
+        }
+    
+        try (PreparedStatement stmt = conn.prepareStatement(baseQuery.toString())) {
+            for (int i = 0; i < parameters.size(); i++) {
+                stmt.setObject(i + 1, parameters.get(i));
+            }
+    
+            try (ResultSet rs = stmt.executeQuery()) {
+                double baseRate = 2.33;
+                double totalWeightedRate = 0.0; 
+                double totalLoanAmount = 0.0; 
+    
+                while (rs.next()) {
+                    double loanAmount = rs.getDouble("loan_amount_000s");
+                    double rateSpread = rs.getDouble("rate_spread");
+                    int lienStatus = rs.getInt("lien_status");
+    
+                    totalLoanAmount += loanAmount; 
+    
+                    if ((lienStatus == 1 && rateSpread < 1.5) || (lienStatus == 2 && rateSpread < 3.5)) {
+                        continue;
+                    }
+    
+                    totalWeightedRate += loanAmount * rateSpread; 
+                }
+    
+                double weightedRateSpread = totalLoanAmount > 0 ? (totalWeightedRate / totalLoanAmount) : 0;
+                double finalRate = baseRate + weightedRateSpread;
+    
+                System.out.println("Final Weighted Rate Spread Calculation: " + finalRate);
+                System.out.println("Total loan amount (cost of securitization): $" + totalLoanAmount);
+    
+                System.out.println("Do you accept this rate? (yes/no): ");
+                Scanner scanner = new Scanner(System.in);
+                String userChoice = scanner.nextLine();
+    
+                if (userChoice.equalsIgnoreCase("yes")) {
+                    performTransactionalUpdate(conn, activeFilters);
+                    System.exit(0);
                 } else {
-                    effectiveRate = baseRate + rateSpread;
+                    System.out.println("Rate rejected. Returning to main menu...");
                 }
-
-                if (!Double.isNaN(effectiveRate)) {
-                    totalWeightedRate += effectiveRate * loanAmount;
-                    totalLoanAmount += loanAmount;
-                }
-            }
-
-            if (totalLoanAmount == 0) {
-                System.out.println("No valid mortgages found for rate calculation.");
-                return;
-            }
-
-            double weightedAverageRate = totalWeightedRate / totalLoanAmount;
-            System.out.printf("Weighted Average Rate: %.2f%%\n", weightedAverageRate);
-            System.out.printf("Total Cost of Securitization: $%.2f\n", totalLoanAmount * 1000);
-
-            System.out.print("Do you accept this rate and total cost? (yes/no): ");
-            Scanner scanner = new Scanner(System.in);
-            String response = scanner.nextLine();
-
-            if (response.equalsIgnoreCase("yes")) {
-                updatePurchaserType(conn, activeFilters);
-            } else {
-                System.out.println("Rate and cost declined. Returning to the main menu.");
             }
         } catch (SQLException e) {
             e.printStackTrace();
         }
     }
     
-    private static void updatePurchaserType(Connection conn, Map<String, String> activeFilters) {
-        String updateQuery = "UPDATE preliminary2 SET purchaser_type = 9, purchaser_type_name = 'Private Securitization' " +
-                             "WHERE action_taken_name = 'Loan originated' AND purchaser_type IN (0, 1, 2, 3, 4, 8)";
-        
-        if (!activeFilters.isEmpty()) {
-            updateQuery += " AND " + activeFilters.entrySet().stream()
-                    .map(entry -> entry.getKey() + " = '" + entry.getValue() + "'")
-                    .collect(Collectors.joining(" AND "));
-        }
+    /**
+     * Perform the database transaction for updating the purchaser type with SERIALIZABLE isolation
+     */
+    private static void performTransactionalUpdate(Connection conn, Map<String, String> activeFilters) {
+        try {
+            // Set connection to SERIALIZABLE isolation level
+            conn.setTransactionIsolation(Connection.TRANSACTION_SERIALIZABLE);
+            conn.setAutoCommit(false); // Start transaction manually
     
-        try (Statement stmt = conn.createStatement()) {
-            int rowsUpdated = stmt.executeUpdate(updateQuery);
-            System.out.println(rowsUpdated + " mortgages updated to 'Private Securitization'.");
-            System.exit(0); // Exit the program after a successful update
+            // Perform the database update
+            String updateQuery = "UPDATE preliminary2 SET purchaser_type = 9, purchaser_type_name = 'Private Securitization' " +
+                    "WHERE action_taken_name = 'Loan originated' AND purchaser_type IN (0, 1, 2, 3, 4, 8)";
+    
+            if (!activeFilters.isEmpty()) {
+                updateQuery += " AND " + activeFilters.entrySet().stream()
+                        .map(entry -> entry.getKey() + " = '" + entry.getValue() + "'")
+                        .collect(Collectors.joining(" AND "));
+            }
+    
+            try (PreparedStatement stmt = conn.prepareStatement(updateQuery)) {
+                int rowsUpdated = stmt.executeUpdate();
+                if (rowsUpdated > 0) {
+                    conn.commit(); // Commit the transaction if successful
+                    System.out.println(rowsUpdated + " mortgages updated to 'Private Securitization'. Transaction committed.");
+                } else {
+                    conn.rollback();
+                    System.out.println("No matching rows were updated. Transaction rolled back.");
+                }
+            }
+    
         } catch (SQLException e) {
-            System.out.println("Error updating purchaser types. Returning to the main menu.");
-            e.printStackTrace();
+            try {
+                conn.rollback();
+                System.out.println("Error occurred during transaction. Changes rolled back.");
+                e.printStackTrace();
+            } catch (SQLException rollbackEx) {
+                System.err.println("Rollback failed.");
+                rollbackEx.printStackTrace();
+            }
+        } finally {
+            try {
+                conn.setAutoCommit(true); // Restore the default behavior for further operations
+            } catch (SQLException e) {
+                e.printStackTrace();
+            }
         }
     }
+    
+    private static boolean isNumeric(String str) {
+        try {
+            Double.parseDouble(str);
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+    
+    
     
 }
