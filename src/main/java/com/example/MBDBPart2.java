@@ -16,7 +16,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Scanner;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 public class MBDBPart2 {
     public static void main(String[]args){
@@ -76,7 +75,8 @@ public class MBDBPart2 {
                      continue;
                     
                     case 6:
-                    addNewMortgage(conn, scanner);
+                        addNewMortgage(conn, scanner);
+                        continue;
                     case 7:
                         System.out.println("Exiting...");
                         return;
@@ -314,20 +314,33 @@ public class MBDBPart2 {
                 }
             }
     
-            // Second pass: Print only non-skipped columns
+            // Second pass: Print only non-skipped columns and calculate row count and loan sum
+            int rowCount = 0;
+            double loanAmountSum = 0.0;
             while (rs.next()) {
+                rowCount++;
                 for (int i = 1; i <= columnCount; i++) {
                     String columnName = metaData.getColumnName(i);
                     if (!columnsToSkip.contains(columnName)) {
                         System.out.print(columnName + ": " + rs.getString(i) + " ");
                     }
+                    // Accumulate loan amount sum if column is loan_amount_000s
+                    if (columnName.equals("loan_amount_000s")) {
+                        loanAmountSum += rs.getDouble(i);
+                    }
                 }
                 System.out.println();
             }
+    
+            // Print row count and loan amount sum
+            System.out.println("\nNumber of rows matching the filters: " + rowCount);
+            System.out.println("Total loan amount (in 000s): " + loanAmountSum);
+    
         } catch (SQLException e) {
             e.printStackTrace();
         }
     }
+    
 
     
     private static void calculateAndOfferRate(Connection conn, Map<String, String> activeFilters) {
@@ -342,15 +355,19 @@ public class MBDBPart2 {
                 String key = entry.getKey();
                 String value = entry.getValue();
     
+                if (key.equals("tract_to_msamd_income_min") || key.equals("tract_to_msamd_income_max")) {
+                    continue; // Skip these keys; we'll handle them as a range.
+                }
+    
                 if (value.contains(",")) {
                     String[] range = value.split(",");
-                    if (isNumeric(range[0]) && isNumeric(range[1])) {
+                    if (isNumericColumn(range[0]) && isNumericColumn(range[1])) {
                         baseQuery.append(key).append(" BETWEEN ? AND ? AND ");
                         parameters.add(Double.parseDouble(range[0]));
                         parameters.add(Double.parseDouble(range[1]));
                     }
                 } else {
-                    if (isNumeric(value)) {
+                    if (isNumericColumn(value)) {
                         baseQuery.append(key).append(" = ? AND ");
                         parameters.add(Double.parseDouble(value));
                     } else {
@@ -359,7 +376,15 @@ public class MBDBPart2 {
                     }
                 }
             }
-            baseQuery.setLength(baseQuery.length() - 5);
+    
+            // Handle tract_to_msamd_income range if applicable
+            if (activeFilters.containsKey("tract_to_msamd_income_min") && activeFilters.containsKey("tract_to_msamd_income_max")) {
+                baseQuery.append("tract_to_msamd_income BETWEEN ? AND ? AND ");
+                parameters.add(Double.parseDouble(activeFilters.get("tract_to_msamd_income_min")));
+                parameters.add(Double.parseDouble(activeFilters.get("tract_to_msamd_income_max")));
+            }
+    
+            baseQuery.setLength(baseQuery.length() - 5); // Trim trailing AND
         }
     
         try (PreparedStatement stmt = conn.prepareStatement(baseQuery.toString())) {
@@ -408,62 +433,91 @@ public class MBDBPart2 {
         }
     }
     
-    /**
-     * Perform the database transaction for updating the purchaser type with SERIALIZABLE isolation
-     */
     private static void performTransactionalUpdate(Connection conn, Map<String, String> activeFilters) {
         try {
-            // Set connection to SERIALIZABLE isolation level
             conn.setTransactionIsolation(Connection.TRANSACTION_SERIALIZABLE);
-            conn.setAutoCommit(false); // Start transaction manually
+            conn.setAutoCommit(false);
     
-            // Perform the database update
-            String updateQuery = "UPDATE preliminary2 SET purchaser_type = 5, purchaser_type_name = 'Private securitization' " +
+            String updateQuery = "UPDATE preliminary2 SET purchaser_type = 9, purchaser_type_name = 'Private Securitization' " +
                     "WHERE action_taken_name = 'Loan originated' AND purchaser_type IN (0, 1, 2, 3, 4, 8)";
     
+            List<Object> parameters = new ArrayList<>();
             if (!activeFilters.isEmpty()) {
-                updateQuery += " AND " + activeFilters.entrySet().stream()
-                        .map(entry -> entry.getKey() + " = '" + entry.getValue() + "'")
-                        .collect(Collectors.joining(" AND "));
+                updateQuery += " AND ";
+                for (Map.Entry<String, String> entry : activeFilters.entrySet()) {
+                    String key = entry.getKey();
+                    String value = entry.getValue();
+    
+                    if (key.equals("tract_to_msamd_income_min") || key.equals("tract_to_msamd_income_max")) {
+                        continue; // Skip these; handle them as a range below.
+                    }
+    
+                    // Determine whether the column is numeric or string
+                    if (isNumericColumn(key)) {
+                        updateQuery += key + " = ? AND ";
+                        parameters.add(Double.parseDouble(value));
+                    } else {
+                        updateQuery += key + " = ? AND ";
+                        parameters.add(value);
+                    }
+                }
+    
+                // Handle the tract_to_msamd_income range separately
+                if (activeFilters.containsKey("tract_to_msamd_income_min") && activeFilters.containsKey("tract_to_msamd_income_max")) {
+                    updateQuery += "tract_to_msamd_income BETWEEN ? AND ? AND ";
+                    parameters.add(Double.parseDouble(activeFilters.get("tract_to_msamd_income_min")));
+                    parameters.add(Double.parseDouble(activeFilters.get("tract_to_msamd_income_max")));
+                }
+    
+                updateQuery = updateQuery.substring(0, updateQuery.length() - 5); // Remove trailing AND
             }
     
             try (PreparedStatement stmt = conn.prepareStatement(updateQuery)) {
+                for (int i = 0; i < parameters.size(); i++) {
+                    stmt.setObject(i + 1, parameters.get(i));
+                }
+    
                 int rowsUpdated = stmt.executeUpdate();
                 if (rowsUpdated > 0) {
-                    conn.commit(); // Commit the transaction if successful
+                    conn.commit();
                     System.out.println(rowsUpdated + " mortgages updated to 'Private Securitization'. Transaction committed.");
                 } else {
                     conn.rollback();
                     System.out.println("No matching rows were updated. Transaction rolled back.");
                 }
             }
-    
         } catch (SQLException e) {
             try {
                 conn.rollback();
-                System.out.println("Error occurred during transaction. Changes rolled back.");
+                System.out.println("Error during transaction. Changes rolled back.");
                 e.printStackTrace();
             } catch (SQLException rollbackEx) {
-                System.err.println("Rollback failed.");
                 rollbackEx.printStackTrace();
             }
         } finally {
             try {
-                conn.setAutoCommit(true); // Restore the default behavior for further operations
+                conn.setAutoCommit(true);
             } catch (SQLException e) {
                 e.printStackTrace();
             }
         }
     }
     
-    private static boolean isNumeric(String str) {
-        try {
-            Double.parseDouble(str);
-            return true;
-        } catch (NumberFormatException e) {
-            return false;
-        }
+    
+    
+    
+    /**
+ * Determine if the column is numeric based on known numeric columns.
+ * Update this list if additional numeric columns are added to the database schema.
+ */
+    private static boolean isNumericColumn(String columnName) {
+        List<String> numericColumns = Arrays.asList(
+            "tract_to_msamd_income", "loan_amount_000s", "applicant_income_000s",
+            "rate_spread", "lien_status", "purchaser_type"
+        );
+        return numericColumns.contains(columnName);
     }
+
     
     private static void addNewMortgage(Connection conn, Scanner scanner) {
         try {
