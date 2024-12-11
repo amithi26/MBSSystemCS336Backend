@@ -10,10 +10,12 @@ import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Scanner;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 public class MBDBPart2 {
@@ -42,7 +44,8 @@ public class MBDBPart2 {
                     3. Delete All Filters
                     4. Calculate and Offer Rate
                     5. Run Query
-                    6. Exit
+                    6. Add mortgage
+                    7. Exit
                     """);
                 System.out.print("Choose an option: ");
                 int choice = scanner.nextInt();
@@ -73,6 +76,8 @@ public class MBDBPart2 {
                      continue;
                     
                     case 6:
+                    addNewMortgage(conn, scanner);
+                    case 7:
                         System.out.println("Exiting...");
                         return;
                     default:
@@ -273,7 +278,6 @@ public class MBDBPart2 {
     
     
     
-    
     private static String formatList(String[] items) {
         return String.join(",", Arrays.stream(items).map(item -> "'" + item.trim() + "'").toArray(String[]::new));
     }
@@ -281,13 +285,42 @@ public class MBDBPart2 {
     private static void executeQuery(Connection conn, String query) {
         try (Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery(query)) {
-
+    
             ResultSetMetaData metaData = rs.getMetaData();
             int columnCount = metaData.getColumnCount();
-
+            Set<String> columnsToSkip = new HashSet<>();
+    
+            // First pass: Identify columns to skip
+            Map<String, String> baseToNameColumn = new HashMap<>();
+            for (int i = 1; i <= columnCount; i++) {
+                String columnName = metaData.getColumnName(i);
+                if (columnName.endsWith("_name")) {
+                    // Extract base name
+                    String baseName = columnName.substring(0, columnName.lastIndexOf("_name"));
+                    baseToNameColumn.put(baseName, columnName);
+                }
+            }
+    
+            for (int i = 1; i <= columnCount; i++) {
+                String columnName = metaData.getColumnName(i);
+                if (!columnName.endsWith("_name")) {
+                    String baseName = columnName.contains("_")
+                            ? columnName.substring(0, columnName.lastIndexOf('_'))
+                            : columnName;
+                    // Skip columns that have a corresponding _name column
+                    if (baseToNameColumn.containsKey(baseName)) {
+                        columnsToSkip.add(columnName);
+                    }
+                }
+            }
+    
+            // Second pass: Print only non-skipped columns
             while (rs.next()) {
                 for (int i = 1; i <= columnCount; i++) {
-                    System.out.print(metaData.getColumnName(i) + ": " + rs.getString(i) + " ");
+                    String columnName = metaData.getColumnName(i);
+                    if (!columnsToSkip.contains(columnName)) {
+                        System.out.print(columnName + ": " + rs.getString(i) + " ");
+                    }
                 }
                 System.out.println();
             }
@@ -295,6 +328,7 @@ public class MBDBPart2 {
             e.printStackTrace();
         }
     }
+
     
     private static void calculateAndOfferRate(Connection conn, Map<String, String> activeFilters) {
         StringBuilder baseQuery = new StringBuilder(
@@ -384,7 +418,7 @@ public class MBDBPart2 {
             conn.setAutoCommit(false); // Start transaction manually
     
             // Perform the database update
-            String updateQuery = "UPDATE preliminary2 SET purchaser_type = 9, purchaser_type_name = 'Private Securitization' " +
+            String updateQuery = "UPDATE preliminary2 SET purchaser_type = 5, purchaser_type_name = 'Private securitization' " +
                     "WHERE action_taken_name = 'Loan originated' AND purchaser_type IN (0, 1, 2, 3, 4, 8)";
     
             if (!activeFilters.isEmpty()) {
@@ -431,6 +465,122 @@ public class MBDBPart2 {
         }
     }
     
-    
+    private static void addNewMortgage(Connection conn, Scanner scanner) {
+        try {
+            System.out.println("Adding a New Mortgage to the Database...");
+            
+            // Prompt user for all necessary fields
+            System.out.print("Enter applicant income (000s): ");
+            double income = scanner.nextDouble();
+            System.out.print("Enter loan amount (000s): ");
+            double loanAmount = scanner.nextDouble();
+            scanner.nextLine(); // Clear newline buffer
+            
+            System.out.println("Choose an MSAMD option: ");
+            System.out.println("""
+                    1. Allentown, Bethlehem, Easton - PA, NJ
+                    2. Atlantic City, Hammonton - NJ
+                    3. Camden - NJ
+                    4. New York, Jersey City, White Plains - NY, NJ
+                    5. Newark - NJ, PA
+                    6. Ocean City - NJ
+                    7. Trenton - NJ
+                    8. Vineland, Bridgeton - NJ
+                    9. Wilmington - DE, MD, NJ
+                    """);
+            int msamdNum = scanner.nextInt();
+            String msamd = null;
+            switch(msamdNum){
+                case 1: msamd = "Allentown, Bethlehem, Easton - PA, NJ"; break;
+                case 2: msamd = "Atlantic City, Hammonton - NJ";break;
+                case 3: msamd = "Camden - NJ";break;
+                case 4: msamd = "New York, Jersey City, White Plains - NY, NJ";break;
+                case 5: msamd = "Newark - NJ, PA";break;
+                case 6: msamd = "Ocean City - NJ";break;
+                case 7: msamd = "Trenton - NJ";break;
+                case 8: msamd = "Vineland, Bridgeton - NJ";break;
+                case 9: msamd = "Wilmington - DE, MD, NJ";break;
+                default: msamd = null;
+            }
+            String county_name = msamd.split("\\s+")[0];
+            
+            System.out.println("Choose applicant sex: ");
+            System.out.println("""
+                    1. Female
+                    2. Male
+                    3. Not applicable
+                    4. Do not wish to provide
+                   """);
+            int applicantSexNum = scanner.nextInt();
+            String applicantSex = null;
+            switch(applicantSexNum){
+                case 1: applicantSex = "Female";break;
+                case 2: applicantSex = "Male";break;
+                case 3: applicantSex = "Not applicable";break;
+                case 4: applicantSex = "Information not provided by applicant in mail, Internet, or telephone application";break;
+                default: applicantSex = null;
+            }
+            
+            System.out.println("Choose loan type: ");
+            System.out.println("""
+                    1. Conventional
+                    2. FHA-insured
+                    3. FSA/RHS-guaranteed
+                    4. VA-guaranteed
+                   """);
+            int loanTypeNum = scanner.nextInt();
+            String loanType = null;
+            switch(loanTypeNum){
+                case 1: loanType = "Conventional";break;
+                case 2: loanType = "FHA-insured";break;
+                case 3: loanType = "FSA/RHS-guaranteed";break;
+                case 4: loanType = "VA-guaranteed";break;
+                default: loanType = null;
+            }
+            
+            System.out.println("Choose applicant ethnicity: ");
+            System.out.println("""
+                    1. Hispanic or Latino
+                    2. Not Hispanic or Latino
+                    3. Not applicable
+                    4. Don't wish to answer
+                   """);
+            int ethnicityNum = scanner.nextInt();
+            String ethnicity = null;
+            switch(ethnicityNum){
+                case 1: ethnicity = "Hispanic or Latino";break;
+                case 2: ethnicity = "Not Hispanic or Latino";break;
+                case 3: ethnicity = "Not applicable";break;
+                case 4: ethnicity = "Information not provided by applicant in mail, Internet, or telephone application";break;
+                default: ethnicity = null;
+            }
+
+            // Use a SQL insert query with placeholders
+            String insertQuery = 
+                "INSERT INTO preliminary2 (applicant_income_000s, loan_amount_000s, msamd_name, applicant_sex_name, loan_type_name, applicant_ethnicity_name, county_name) " +
+                "VALUES (?, ?, ?, ?, ?, ?, ?);";
+
+            try (PreparedStatement pstmt = conn.prepareStatement(insertQuery)) {
+                pstmt.setDouble(1, income);
+                pstmt.setDouble(2, loanAmount);
+                pstmt.setString(3, msamd); 
+                pstmt.setString(4, applicantSex);
+                pstmt.setString(5, loanType);
+                pstmt.setString(6, ethnicity);
+                pstmt.setString(7, county_name);
+
+                int rowsInserted = pstmt.executeUpdate();
+                if (rowsInserted > 0) {
+                    System.out.println("Executing: " + pstmt);
+                    System.out.println("Mortgage added successfully!");
+                } else {
+                    System.out.println("Failed to add mortgage.");
+                }
+            }
+        } catch (SQLException e) {
+            System.err.println("Error while inserting mortgage into the database.");
+            e.printStackTrace();
+        }
+    }
     
 }
